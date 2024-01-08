@@ -16,8 +16,8 @@ namespace hardware {
 namespace light {
 
 static const std::string kAllButtonsPaths[] = {
-    "/sys/class/leds/button-backlight/brightness",
-    "/sys/class/leds/button-backlight1/brightness",
+        "/sys/class/leds/button-backlight/brightness",
+        "/sys/class/leds/button-backlight1/brightness",
 };
 
 enum led_type {
@@ -29,65 +29,63 @@ enum led_type {
 };
 
 static LED kLEDs[MAX_LEDS] = {
-    [RED] = LED("red"),
-    [GREEN] = LED("green"),
-    [BLUE] = LED("blue"),
-    [WHITE] = LED("white"),
+        [RED] = LED("red"),
+        [GREEN] = LED("green"),
+        [BLUE] = LED("blue"),
+        [WHITE] = LED("white"),
 };
 
-#define AutoHwLight(light) {.id = (int32_t)light, .type = light, .ordinal = 0}
-
-static const HwLight kBacklightHwLight = AutoHwLight(LightType::BACKLIGHT);
-static const HwLight kBatteryHwLight = AutoHwLight(LightType::BATTERY);
-static const HwLight kButtonsHwLight = AutoHwLight(LightType::BUTTONS);
-static const HwLight kNotificationHwLight = AutoHwLight(LightType::NOTIFICATIONS);
+#define AutoHwLight(light) \
+    { .id = (int32_t)light, .type = light, .ordinal = 0 }
 
 Lights::Lights() {
     mBacklightDevice = getBacklightDevice();
     if (mBacklightDevice) {
-        mLights.push_back(kBacklightHwLight);
+        mLights.push_back(AutoHwLight(LightType::BACKLIGHT));
     }
 
     for (auto& buttons : kAllButtonsPaths) {
-        if (!fileWriteable(buttons))
-            continue;
+        if (!fileWriteable(buttons)) continue;
 
         mButtonsPaths.push_back(buttons);
     }
 
-    if (!mButtonsPaths.empty())
-        mLights.push_back(kButtonsHwLight);
+    if (!mButtonsPaths.empty()) mLights.push_back(AutoHwLight(LightType::BUTTONS));
 
     mWhiteLED = kLEDs[WHITE].exists();
 
-    mLights.push_back(kBatteryHwLight);
-    mLights.push_back(kNotificationHwLight);
+    mLights.push_back(AutoHwLight(LightType::BATTERY));
+    mLights.push_back(AutoHwLight(LightType::NOTIFICATIONS));
+    mLights.push_back(AutoHwLight(LightType::ATTENTION));
 }
 
 ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) {
-    rgb_t color(state.color);
-    rgb_t batteryStateColor;
+    rgb color(state.color);
 
     LightType type = static_cast<LightType>(id);
     switch (type) {
         case LightType::BACKLIGHT:
-            if (mBacklightDevice)
-                mBacklightDevice->setBacklight(color.toBrightness());
+            if (mBacklightDevice) mBacklightDevice->setBacklight(color.toBrightness());
             break;
         case LightType::BUTTONS:
-            for (auto& buttons : mButtonsPaths)
-                writeToFile(buttons, color.isLit());
+            for (auto& buttons : mButtonsPaths) writeToFile(buttons, color.isLit());
             break;
         case LightType::BATTERY:
         case LightType::NOTIFICATIONS:
+        case LightType::ATTENTION:
             mLEDMutex.lock();
+
             if (type == LightType::BATTERY)
                 mLastBatteryState = state;
-            else
+            else if (type == LightType::NOTIFICATIONS)
                 mLastNotificationState = state;
-            batteryStateColor = rgb_t(mLastBatteryState.color);
-            setLED(batteryStateColor.isLit() ? mLastBatteryState : mLastNotificationState);
+            else if (type == LightType::ATTENTION)
+                mLastAttentionState = state;
+
+            setLED();
+
             mLEDMutex.unlock();
+
             break;
         default:
             return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
@@ -97,16 +95,23 @@ ndk::ScopedAStatus Lights::setLightState(int32_t id, const HwLightState& state) 
     return ndk::ScopedAStatus::ok();
 }
 
-ndk::ScopedAStatus Lights::getLights(std::vector<HwLight> *_aidl_return) {
-    for (auto& light : mLights)
-        _aidl_return->push_back(light);
+ndk::ScopedAStatus Lights::getLights(std::vector<HwLight>* _aidl_return) {
+    for (const auto& light : mLights) _aidl_return->push_back(light);
 
     return ndk::ScopedAStatus::ok();
 }
 
-void Lights::setLED(const HwLightState& state) {
+void Lights::setLED() {
     bool rc = true;
-    rgb_t color(state.color);
+
+    bool isBatteryLit = rgb(mLastBatteryState.color).isLit();
+    bool isAttentionLit = rgb(mLastAttentionState.color).isLit();
+
+    const HwLightState state = isBatteryLit     ? mLastBatteryState
+                               : isAttentionLit ? mLastAttentionState
+                                                : mLastNotificationState;
+
+    rgb color(state.color);
     uint8_t blink = (state.flashOnMs != 0 && state.flashOffMs != 0);
 
     switch (state.flashMode) {
@@ -115,15 +120,11 @@ void Lights::setLED(const HwLightState& state) {
             if (mWhiteLED) {
                 rc = kLEDs[WHITE].setBreath(blink);
             } else {
-                if (!!color.red)
-                    rc &= kLEDs[RED].setBreath(blink);
-                if (!!color.green)
-                    rc &= kLEDs[GREEN].setBreath(blink);
-                if (!!color.blue)
-                    rc &= kLEDs[BLUE].setBreath(blink);
+                rc = kLEDs[RED].setBreath(blink && color.red);
+                rc &= kLEDs[GREEN].setBreath(blink && color.green);
+                rc &= kLEDs[BLUE].setBreath(blink && color.blue);
             }
-            if (rc)
-                break;
+            if (rc) break;
             FALLTHROUGH_INTENDED;
         default:
             if (mWhiteLED) {
@@ -139,7 +140,7 @@ void Lights::setLED(const HwLightState& state) {
     return;
 }
 
-} // namespace light
-} // namespace hardware
-} // namespace android
-} // namespace aidl
+}  // namespace light
+}  // namespace hardware
+}  // namespace android
+}  // namespace aidl

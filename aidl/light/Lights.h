@@ -10,8 +10,8 @@
 #include <mutex>
 #include "Backlight.h"
 
-using ::aidl::android::hardware::light::HwLightState;
 using ::aidl::android::hardware::light::HwLight;
+using ::aidl::android::hardware::light::HwLightState;
 
 namespace aidl {
 namespace android {
@@ -19,26 +19,29 @@ namespace hardware {
 namespace light {
 
 class Lights : public BnLights {
-public:
+  public:
     Lights();
 
     ndk::ScopedAStatus setLightState(int32_t id, const HwLightState& state) override;
-    ndk::ScopedAStatus getLights(std::vector<HwLight> *_aidl_return) override;
-private:
-    void setLED(const HwLightState& state);
+    ndk::ScopedAStatus getLights(std::vector<HwLight>* _aidl_return) override;
+
+  private:
+    void setLED();
 
     std::vector<HwLight> mLights;
 
-    BacklightDevice *mBacklightDevice;
+    BacklightDevice* mBacklightDevice;
     std::vector<std::string> mButtonsPaths;
     bool mWhiteLED;
 
     std::mutex mLEDMutex;
+
     HwLightState mLastBatteryState;
     HwLightState mLastNotificationState;
+    HwLightState mLastAttentionState;
 };
 
-} // namespace light
-} // namespace hardware
-} // namespace android
-} // namespace aidl
+}  // namespace light
+}  // namespace hardware
+}  // namespace android
+}  // namespace aidl
